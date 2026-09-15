@@ -1,0 +1,67 @@
+# ============================================================
+# PERSONAL AI ASSISTANT — .gitignore
+# ============================================================
+
+# --- Environment / secrets ---
+.env
+.env.*
+
+# --- OAuth / Google credentials ---
+**/gmail_credentials.json
+**/gmail_token.json
+**/credentials.json
+**/token.json
+config/secrets/
+
+# --- Telegram session files ---
+**/*.session
+**/*.session-journal
+
+# --- WhatsApp authentication state ---
+**/auth_state/
+**/.bridge.lock
+
+# --- Logs ---
+*.log
+logs/
+data/logs/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.pyrefly/
+.ruff_cache/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- Build / packaging ---
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Local runtime state / databases ---
+*.db
+*.sqlite
+*.sqlite3
+data/memory/
+data/assistant.db
+data/outbound_files/
+data/semantic_index/
+data/drafts/
+
+# --- Node (WhatsApp Baileys bridge) ---
+node_modules/
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personal-ai-assistant"
+version = "0.1.0"
+description = "Laptop-side Agent Core for the personal AI assistant (see docs/architecture)."
+requires-python = ">=3.10"
+dependencies = [
+    "beautifulsoup4==4.15.0",
+    "google-api-python-client==2.149.0",
+    "google-auth==2.35.0",
+    "google-auth-httplib2==0.2.0",
+    "google-auth-oauthlib==1.2.1",
+    "groq>=1.7.0",
+    "langchain==1.3.15",
+    "langchain-core==1.5.6",
+    "langchain-mistralai>=1.0.0",
+    "langchain-google-genai>=3.0.0",
+    "langgraph==1.2.11",
+    "mistralai>=1.0.0",
+    "pydantic==2.13.4",
+    "pytest==8.3.3",
+    "pytest-asyncio==0.24.0",
+    "python-dotenv==1.0.1",
+    "pyyaml==6.0.2",
+    "requests==2.32.3",
+    "rich==13.9.4",
+    "tavily-python>=0.7.0",
+    "telethon==1.36.0",
+    "websockets>=14,<16",
+    "streamlit>=1.30.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

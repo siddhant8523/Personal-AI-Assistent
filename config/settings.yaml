@@ -1,0 +1,36 @@
+app:
+  name: "Personal AI Assistant"
+  version: "0.1.0"
+
+channels:
+  cli:
+    enabled: true
+  whatsapp:
+    enabled: false
+  telegram:
+    enabled: false
+
+# Conversation identity map — chat_id -> AGENT_CHAT | NORMAL
+# This is what the Conversation Router uses (Rule: route by chat identity,
+# never by inspecting message text).
+conversations:
+  cli_default: AGENT_CHAT
+  # example entries once real connectors are wired up:
+  # "whatsapp:1234567890@s.whatsapp.net": AGENT_CHAT
+  # "whatsapp:919999999999@s.whatsapp.net": NORMAL
+  # "telegram:987654321": AGENT_CHAT
+
+priority:
+  weights:
+    sender_importance: 3
+    content_importance: 2
+    urgency: 3
+    deadline: 2
+    noise_penalty: -4
+  thresholds:
+    high: 6
+    medium: 3
+
+memory:
+  session_ttl_minutes: 60
+  daily_retention_days: 30

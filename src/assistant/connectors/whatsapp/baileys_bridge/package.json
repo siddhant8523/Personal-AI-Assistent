@@ -1,0 +1,16 @@
+{
+  "name": "baileys-bridge",
+  "version": "0.1.0",
+  "description": "Minimal Node bridge exposing Baileys over local HTTP for the Python WhatsApp connector.",
+  "main": "index.js",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "dotenv": "^17.4.2",
+    "express": "^4.21.1",
+    "multer": "^1.4.5-lts.1",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}

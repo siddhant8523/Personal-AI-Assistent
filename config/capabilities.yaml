@@ -1,0 +1,50 @@
+# Explicit allow-list of capabilities the Tool Router / Android device may
+# execute. Nothing outside this list is dispatchable (Rule 18, Rule 19).
+# No simulated successful sends for anything not listed here.
+
+android_capabilities:
+  - sms.send
+  - sms.read
+  - call.make
+  - file.read
+  - file.upload  # phone -> laptop, into OUTBOUND_FILES_DIR only
+  - file.list
+  - file.find
+  - intent.execute
+  - intent.open_app
+  - alarm.set
+  - alarm.list
+  - alarm.cancel
+  - timer.set
+  - contact.find
+  - contacts.search
+
+
+
+          
+cloud_capabilities:
+  # Gmail
+  - send_email
+  - read_email
+  - search_email
+  - create_email_draft
+  - send_gmail_attachment
+  # Telegram (personal account)
+  - send_telegram_message
+  - send_telegram_file
+  - find_telegram_contact
+  - read_telegram_messages
+  # WhatsApp
+  - send_whatsapp_message
+  - send_whatsapp_file
+  - find_whatsapp_contact
+  - read_whatsapp_messages
+
+file_access:
+  allowed_roots:
+    - "./data/files"
+    - "./data/outbound_files"
+    - "~/Documents/AssistantFiles"
+  # Overridden at runtime by MAX_OUTBOUND_FILE_SIZE_MB (.env) — this is
+  # just the fallback if that var is unset.
+  max_file_size_mb: 10

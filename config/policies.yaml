@@ -1,0 +1,64 @@
+# Policy Engine configuration.
+# Any capability listed here as requires_approval: true will always be
+# drafted first and held for explicit user approval (Rule 12, Rule 13).
+# The LLM cannot bypass this -- the orchestrator checks this table before
+# the Tool Router is ever invoked for a capability.
+
+capabilities:
+  # --- Outbound messages (consequential -> approval required) ---
+  send_whatsapp_message:
+    requires_approval: true
+  send_whatsapp_file:
+    requires_approval: true
+  send_telegram_message:
+    requires_approval: true
+  send_telegram_file:
+    requires_approval: true
+  send_sms:
+    requires_approval: true
+  send_email:
+    requires_approval: true
+  send_gmail_attachment:
+    requires_approval: true
+  create_email_draft:
+    requires_approval: false   # a draft isn't sent yet
+  send_file:
+    requires_approval: true
+  make_call:
+    requires_approval: true
+  change_assistant_name:
+    requires_approval: true
+
+  # --- Read-only / informational (no approval needed) ---
+  read_email:
+    requires_approval: false
+  search_email:
+    requires_approval: false
+  read_sms:
+    requires_approval: false
+  read_telegram_messages:
+    requires_approval: false
+  read_whatsapp_messages:
+    requires_approval: false
+  find_telegram_contact:
+    requires_approval: false
+  find_whatsapp_contact:
+    requires_approval: false
+  find_file:
+    requires_approval: false
+  query_priority_inbox:
+    requires_approval: false
+
+  # --- Android device actions ---
+  set_alarm:
+    requires_approval: false
+  set_timer:
+    requires_approval: false
+  upload_file:
+    requires_approval: false   # pulling FROM the phone isn't sending anything externally
+
+# A generic "yes" is never sufficient (Rule 6). Approval must reference
+# an exact task_id + action + target + draft version.
+approval:
+  require_task_binding: true
+  draft_expiry_minutes: 30
