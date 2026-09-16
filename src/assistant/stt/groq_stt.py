@@ -11,6 +11,7 @@ import logging
 import mimetypes
 import os
 import tempfile
+import traceback
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -151,6 +152,10 @@ class GroqSTTService:
         client: Any = None,
     ):
         self.api_key = api_key if api_key is not None else os.getenv("GROQ_API_KEY", "").strip()
+        has_api_key = bool(self.api_key)
+        print(f"[STT INIT] GROQ_API_KEY present: {has_api_key}", flush=True)
+        logger.info("[STT INIT] GROQ_API_KEY present: %s", has_api_key)
+
         self.model = model or os.getenv("GROQ_STT_MODEL", self.DEFAULT_MODEL).strip()
         self._client = client
 
@@ -159,11 +164,31 @@ class GroqSTTService:
                 from groq import Groq
 
                 self._client = Groq(api_key=self.api_key)
-            except ImportError:
-                logger.warning("Groq SDK not installed; GroqSTTService running offline.")
+            except ImportError as exc:
+                print(
+                    f"[STT INIT ERROR] Groq SDK import failed | type={type(exc).__name__} | message={exc} | api_key_present={has_api_key}",
+                    flush=True,
+                )
+                traceback.print_exc()
+                logger.warning(
+                    "Groq SDK not installed; GroqSTTService running offline. (type=%s, message=%s, api_key_present=%s)",
+                    type(exc).__name__,
+                    exc,
+                    has_api_key,
+                )
                 self._client = None
             except Exception as exc:
-                logger.warning("Failed to initialize Groq client: %s", exc)
+                print(
+                    f"[STT INIT ERROR] Groq client init failed | type={type(exc).__name__} | message={exc} | api_key_present={has_api_key}",
+                    flush=True,
+                )
+                traceback.print_exc()
+                logger.warning(
+                    "Failed to initialize Groq client: %s (type=%s, api_key_present=%s)",
+                    exc,
+                    type(exc).__name__,
+                    has_api_key,
+                )
                 self._client = None
 
     @property
