@@ -21,6 +21,7 @@ import logging
 import os
 import subprocess
 import time
+import traceback
 import requests
 
 from assistant.logging_config import (
@@ -399,6 +400,8 @@ class WhatsAppConnector:
                             else:
                                 logger.warning("[WhatsApp] Downloaded empty audio")
                         except Exception as exc:
+                            print(f"[STT ERROR] {type(exc).__name__}: {exc}", flush=True)
+                            traceback.print_exc()
                             logger.error("[WhatsApp] STT processing failed for audio: %s", exc)
                             if is_agent:
                                 self.send_message(chat_id, "Sorry, I could not transcribe your voice message. Please try again or send text.")

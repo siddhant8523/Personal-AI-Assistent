@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
-
-import os
+import traceback
 from assistant.channels.presence import PresenceIndicator, TelegramPresenceIndicator
 from assistant.ingestion.unified_message import Origin, Source, UnifiedMessage
 from assistant.stt.groq_stt import STTError, resolve_supported_audio_extension, temp_audio_file
@@ -92,6 +92,8 @@ class TelegramChannel:
                                             "message_type": "voice" if raw.get("voice") else "audio",
                                         }
                             except STTError as exc:
+                                print(f"[STT ERROR] {type(exc).__name__}: {exc}", flush=True)
+                                traceback.print_exc()
                                 logger.warning("Telegram STT transcription error: %s", exc)
                                 self.connector.send_message(
                                     chat_id,

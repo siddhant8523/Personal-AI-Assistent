@@ -35,6 +35,7 @@ from assistant.ui.styles import (
     render_tool_html,
     sanitize_error_message,
 )
+# pyrefly: ignore [missing-import]
 import streamlit_app
 
 

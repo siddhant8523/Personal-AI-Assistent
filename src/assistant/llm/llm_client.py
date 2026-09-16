@@ -8,6 +8,7 @@ If no valid API key is set for the selected provider, falls back to offline mode
 """
 
 from __future__ import annotations
+from collections.abc import Sequence
 
 import json
 import logging
