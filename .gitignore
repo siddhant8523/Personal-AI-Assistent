@@ -50,7 +50,6 @@ dist/
 *.db
 *.sqlite
 *.sqlite3
-data/memory/
 data/assistant.db
 data/outbound_files/
 data/semantic_index/

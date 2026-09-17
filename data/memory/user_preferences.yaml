@@ -1,0 +1,7 @@
+important_contacts:
+- manager
+- mom
+- dad
+quiet_hours:
+  end: 07:00
+  start: '23:00'
