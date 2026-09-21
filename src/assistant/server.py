@@ -56,44 +56,18 @@ async def health_check_handler(request: Request) -> Response:
     return PlainTextResponse("OK", status_code=200)
 
 
-def sanitize_close_code(code: Any) -> int:
-    """Sanitizes WebSocket close codes per RFC 6455.
-
-    Reserved pseudo-codes (1004, 1005, 1006, 1015), None, and out-of-range codes
-    cannot be sent in a Close control frame and are mapped to 1000 (Normal Closure).
-    """
-    if not isinstance(code, int):
-        return 1000
-    if code in (1004, 1005, 1006, 1015) or code < 1000 or code > 4999:
-        return 1000
-    return code
-
-
 async def proxy_websocket(client_ws: WebSocket, upstream_url: str, connect_timeout: float = 5.0) -> None:
     """Transparently proxies WebSocket traffic bidirectionally between client and upstream server."""
+    await client_ws.accept()
     subprotocols = client_ws.scope.get("subprotocols") or None
 
-    forward_headers: dict[str, str] = {}
-    for k, v in client_ws.headers.items():
-        lower_k = k.lower()
-        if lower_k in ("cookie", "user-agent", "x-forwarded-for", "x-forwarded-proto", "x-forwarded-host", "x-real-ip"):
-            forward_headers[k] = v
-    if "x-forwarded-for" not in {k.lower() for k in forward_headers} and client_ws.client:
-        forward_headers["X-Forwarded-For"] = client_ws.client.host
-
-    # Connect to upstream first to negotiate subprotocol and ensure upstream is alive
+    # Retry connection briefly in case upstream service is finishing startup
     upstream_ws = None
     deadline = time.time() + connect_timeout
     while time.time() < deadline and upstream_ws is None:
         try:
-            upstream_ws = await websockets.connect(
-                upstream_url,
-                subprotocols=subprotocols,
-                additional_headers=forward_headers or None,
-                ping_interval=None,
-                max_size=None,
-            )
-        except (OSError, websockets.exceptions.WebSocketException):
+            upstream_ws = await websockets.connect(upstream_url, subprotocols=subprotocols, ping_interval=None)
+        except (OSError, websockets.exceptions.WebSocketException) as conn_err:
             await asyncio.sleep(0.2)
 
     if upstream_ws is None:
@@ -103,9 +77,6 @@ async def proxy_websocket(client_ws: WebSocket, upstream_url: str, connect_timeo
         except Exception:
             pass
         return
-
-    # Accept the client connection matching upstream's negotiated subprotocol
-    await client_ws.accept(subprotocol=upstream_ws.subprotocol)
 
     try:
         async def client_to_upstream() -> None:
@@ -119,8 +90,7 @@ async def proxy_websocket(client_ws: WebSocket, upstream_url: str, connect_timeo
                         elif "bytes" in msg and msg["bytes"] is not None:
                             await upstream_ws.send(msg["bytes"])
                     elif msg_type == "websocket.disconnect":
-                        raw_code = msg.get("code", 1000)
-                        close_code = sanitize_close_code(raw_code)
+                        close_code = msg.get("code", 1000)
                         await upstream_ws.close(code=close_code)
                         break
             except (websockets.exceptions.ConnectionClosed, asyncio.CancelledError):
@@ -155,10 +125,7 @@ async def proxy_websocket(client_ws: WebSocket, upstream_url: str, connect_timeo
         except Exception:
             pass
         try:
-            close_code = 1000
-            if upstream_ws is not None and getattr(upstream_ws, "close_code", None) is not None:
-                close_code = sanitize_close_code(upstream_ws.close_code)
-            await client_ws.close(code=close_code)
+            await client_ws.close()
         except Exception:
             pass
 
@@ -295,12 +262,6 @@ def start_streamlit_process(
         host,
         "--server.headless",
         "true",
-        "--server.enableCORS",
-        "false",
-        "--server.enableXsrfProtection",
-        "false",
-        "--server.enableWebsocketCompression",
-        "false",
         "--browser.serverAddress",
         "0.0.0.0",
         "--browser.gatherUsageStats",

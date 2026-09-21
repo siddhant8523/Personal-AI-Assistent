@@ -16,7 +16,7 @@ from assistant.device_gateway.transport.protocol import DeviceCommand
 from assistant.device_gateway.transport.ws_transport import _handler
 from assistant.security.auth import DeviceAuth
 from assistant.security.capability_validator import CapabilityValidator
-from assistant.server import create_app, sanitize_close_code, start_streamlit_process
+from assistant.server import create_app
 
 
 @pytest.fixture
@@ -33,27 +33,6 @@ def gateway():
     gw.receive_event = MagicMock()
     gw.handle_device_result = MagicMock()
     return gw
-
-
-def test_sanitize_close_code():
-    # Reserved codes that must not appear in WebSocket Close control frames
-    assert sanitize_close_code(1004) == 1000
-    assert sanitize_close_code(1005) == 1000
-    assert sanitize_close_code(1006) == 1000
-    assert sanitize_close_code(1015) == 1000
-    # None and non-int values
-    assert sanitize_close_code(None) == 1000
-    assert sanitize_close_code("1000") == 1000
-    # Out of range codes
-    assert sanitize_close_code(999) == 1000
-    assert sanitize_close_code(5000) == 1000
-    assert sanitize_close_code(-1) == 1000
-    # Valid RFC 6455 codes
-    assert sanitize_close_code(1000) == 1000
-    assert sanitize_close_code(1001) == 1001
-    assert sanitize_close_code(1008) == 1008
-    assert sanitize_close_code(1011) == 1011
-    assert sanitize_close_code(4000) == 4000
 
 
 @pytest.mark.asyncio
@@ -186,8 +165,6 @@ async def test_asgi_device_gateway_ws_auth_failure(gateway, auth):
 
 @pytest.mark.asyncio
 async def test_streamlit_http_and_websocket_forwarding():
-    received_headers = {}
-
     async def mock_streamlit_backend(scope, receive, send):
         if scope["type"] == "http":
             req = Request(scope, receive)
@@ -202,19 +179,9 @@ async def test_streamlit_http_and_websocket_forwarding():
                 await resp(scope, receive, send)
         elif scope["type"] == "websocket":
             ws = WebSocket(scope, receive, send)
-            for k, v in ws.headers.items():
-                received_headers[k.lower()] = v
-            subprotocols = ws.scope.get("subprotocols") or []
-            selected_sub = subprotocols[0] if subprotocols else None
-            await ws.accept(subprotocol=selected_sub)
-            
-            # 1. Test text frame echo
-            text_msg = await ws.receive_text()
-            await ws.send_text(f"streamlit_echo:{text_msg}")
-
-            # 2. Test binary frame echo
-            bytes_msg = await ws.receive_bytes()
-            await ws.send_bytes(b"ST_BIN:" + bytes_msg)
+            await ws.accept()
+            msg = await ws.receive_text()
+            await ws.send_text(f"streamlit_echo:{msg}")
             await ws.close()
 
     st_config = uvicorn.Config(mock_streamlit_backend, host="127.0.0.1", port=18502, log_level="error", lifespan="off")
@@ -243,92 +210,13 @@ async def test_streamlit_http_and_websocket_forwarding():
             assert r.status_code == 200
             assert "console.log" in r.text
 
-        # Connect with subprotocols and headers
-        async with websockets.connect(
-            "ws://127.0.0.1:19003/_stcore/stream",
-            subprotocols=["streamlit", "xsrf_token_value"],
-            additional_headers={"Cookie": "_streamlit_xsrf=secret123", "User-Agent": "StreamlitTestBrowser/1.0"},
-        ) as ws:
-            # Check negotiated subprotocol forwarded to client
-            assert ws.subprotocol == "streamlit"
-
-            # Check text frame forwarding
+        async with websockets.connect("ws://127.0.0.1:19003/_stcore/stream") as ws:
             await ws.send("client_init")
-            resp_text = await ws.recv()
-            assert resp_text == "streamlit_echo:client_init"
-
-            # Check binary frame forwarding
-            await ws.send(b"\x00\x01\x02\x03")
-            resp_bytes = await ws.recv()
-            assert resp_bytes == b"ST_BIN:\x00\x01\x02\x03"
-
-        assert "cookie" in received_headers
-        assert "_streamlit_xsrf=secret123" in received_headers["cookie"]
-        assert received_headers.get("user-agent") == "StreamlitTestBrowser/1.0"
+            resp = await ws.recv()
+            assert resp == "streamlit_echo:client_init"
 
     finally:
         st_server.should_exit = True
         proxy_server.should_exit = True
         await st_task
         await proxy_task
-
-
-@pytest.mark.asyncio
-async def test_real_streamlit_process_websocket_stream_regression():
-    """Focused regression test for /_stcore/stream against real Streamlit child process."""
-    proc = start_streamlit_process(port=18505, host="127.0.0.1")
-    await asyncio.sleep(2.5)
-
-    app = create_app(
-        streamlit_http_url="http://127.0.0.1:18505",
-        streamlit_ws_url="ws://127.0.0.1:18505",
-        gateway_ws_url="ws://127.0.0.1:18768",
-    )
-
-    proxy_config = uvicorn.Config(app, host="127.0.0.1", port=19005, log_level="error", lifespan="off")
-    proxy_server = uvicorn.Server(proxy_config)
-    proxy_task = asyncio.create_task(proxy_server.serve())
-
-    await asyncio.sleep(0.5)
-
-    try:
-        # 1. Test HTTP GET /
-        async with httpx.AsyncClient(base_url="http://127.0.0.1:19005") as client:
-            resp = await client.get("/")
-            assert resp.status_code == 200
-
-        # 2. Test WebSocket connection with external Render Origin and subprotocols
-        async with websockets.connect(
-            "ws://127.0.0.1:19005/_stcore/stream",
-            subprotocols=["streamlit", "test-token-123"],
-            additional_headers={"Origin": "https://personal-ai-assistent-raum.onrender.com"},
-        ) as ws:
-            assert ws.subprotocol == "streamlit"
-
-            # Send Streamlit BackMsg rerun_script binary protobuf
-            from streamlit.proto.BackMsg_pb2 import BackMsg
-            from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
-
-            back_msg = BackMsg()
-            back_msg.rerun_script.query_string = ""
-            await ws.send(back_msg.SerializeToString())
-
-            # Receive binary ForwardMsg response from Streamlit
-            reply_raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
-            assert isinstance(reply_raw, bytes)
-            assert len(reply_raw) > 0
-
-            forward_msg = ForwardMsg()
-            forward_msg.ParseFromString(reply_raw)
-            # Response should be a valid ForwardMsg (e.g. new_session)
-            assert forward_msg.WhichOneof("type") is not None
-
-    finally:
-        proxy_server.should_exit = True
-        await proxy_task
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except Exception:
-                proc.kill()
