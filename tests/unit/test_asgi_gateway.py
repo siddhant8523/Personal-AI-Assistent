@@ -220,3 +220,86 @@ async def test_streamlit_http_and_websocket_forwarding():
         proxy_server.should_exit = True
         await st_task
         await proxy_task
+
+
+@pytest.mark.asyncio
+async def test_asgi_lifespan_starts_device_gateway_and_proxies_auth():
+    """Validates that ASGI lifespan starts AssistantRuntime and Device Gateway on 8765,
+
+    verifies /ws/device proxies to it, registers device upon AUTH, cleanly stops
+    on ASGI shutdown, and guarantees Streamlit child disables duplicate binding.
+    """
+    import os
+    import socket
+    from unittest.mock import patch
+    from assistant.runtime import get_runtime, reset_runtime
+    from assistant.server import start_streamlit_process
+
+    # 1. Verify Streamlit child receives DEVICE_GATEWAY_ENABLED="false"
+    with patch("subprocess.Popen") as mock_popen:
+        start_streamlit_process(port=8501, host="127.0.0.1")
+        assert mock_popen.called
+        child_env = mock_popen.call_args[1].get("env", {})
+        assert child_env.get("DEVICE_GATEWAY_ENABLED") == "false"
+
+    # 2. Setup runtime environment
+    reset_runtime()
+    os.environ["DEVICE_GATEWAY_ENABLED"] = "true"
+    os.environ["DEVICE_GATEWAY_PORT"] = "8765"
+    os.environ["GMAIL_ENABLED"] = "false"
+    os.environ["WHATSAPP_ENABLED"] = "false"
+    os.environ["TELEGRAM_ENABLED"] = "false"
+    os.environ["TELEGRAM_USER_ENABLED"] = "false"
+
+    with patch("assistant.runtime.load_dotenv"):
+        app = create_app(gateway_ws_url="ws://127.0.0.1:8765", warmup=False, manage_runtime=True)
+        config = uvicorn.Config(app, host="127.0.0.1", port=19005, log_level="error", lifespan="on")
+        server = uvicorn.Server(config)
+        server_task = asyncio.create_task(server.serve())
+
+        for _ in range(50):
+            if server.started:
+                break
+            await asyncio.sleep(0.1)
+        assert server.started
+
+        try:
+            runtime = get_runtime()
+            assert runtime.is_started
+            assert runtime._device_gateway_thread is not None
+            assert runtime._device_gateway_thread.is_alive()
+
+            # Verify port 8765 accepts websocket connections
+            async with websockets.connect("ws://127.0.0.1:8765") as direct_ws:
+                assert direct_ws is not None
+
+            # Verify duplicate startup calls are idempotent
+            original_thread = runtime._device_gateway_thread
+            runtime._start_device_gateway()
+            assert runtime._device_gateway_thread is original_thread
+
+            token = os.environ.get("DEVICE_GATEWAY_AUTH_TOKEN", "")
+
+            async with websockets.connect("ws://127.0.0.1:19005/ws/device") as ws:
+                auth_frame = {
+                    "type": "AUTH",
+                    "token": token,
+                    "device_id": "Pixel-8-Lifespan-Test",
+                    "device_name": "Google Pixel 8",
+                }
+                await ws.send(json.dumps(auth_frame))
+                await asyncio.sleep(0.3)
+
+                assert runtime.device_gateway.is_device_connected()
+                dev_status = runtime.device_gateway.get_device_status()
+                assert dev_status["connected"] is True
+                assert dev_status["device_name"] == "Pixel-8-Lifespan-Test"
+
+        finally:
+            server.should_exit = True
+            await server_task
+            await asyncio.sleep(0.1)
+            runtime = get_runtime()
+            assert not runtime.is_started
+            reset_runtime()
+

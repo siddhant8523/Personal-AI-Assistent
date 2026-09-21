@@ -32,6 +32,8 @@ from starlette.responses import PlainTextResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket
 
+from assistant.runtime import get_runtime
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("assistant.server")
 
@@ -151,16 +153,28 @@ def create_app(
     streamlit_ws_url: str = "ws://127.0.0.1:8501",
     gateway_ws_url: str = "ws://127.0.0.1:8765",
     warmup: bool = False,
+    manage_runtime: bool = True,
 ) -> Starlette:
     """Creates the Starlette application with path-based routing."""
     http_client = httpx.AsyncClient(base_url=streamlit_http_url, timeout=120.0)
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
+        runtime = None
+        if manage_runtime:
+            if "DEVICE_GATEWAY_ENABLED" not in os.environ:
+                os.environ["DEVICE_GATEWAY_ENABLED"] = "true"
+            runtime = get_runtime()
+            if not runtime.is_started:
+                runtime.start()
+
         if warmup:
             asyncio.create_task(_warmup_streamlit(streamlit_http_url))
         yield
-        # Proper ASGI shutdown: close httpx client pool
+        # Proper ASGI shutdown: stop runtime if managed
+        if runtime is not None:
+            runtime.stop()
+        # Close httpx client pool
         await http_client.aclose()
         # Clean up child process if attached
         proc = getattr(app.state, "streamlit_proc", None)
@@ -269,9 +283,8 @@ def start_streamlit_process(
     ]
 
     env = os.environ.copy()
-    # Ensure Device Gateway is enabled inside the Streamlit AssistantRuntime instance
-    if "DEVICE_GATEWAY_ENABLED" not in env:
-        env["DEVICE_GATEWAY_ENABLED"] = "true"
+    # Device Gateway is managed by the unified ASGI server lifecycle on port 8765
+    env["DEVICE_GATEWAY_ENABLED"] = "false"
 
     logger.info("Starting Streamlit child process on %s:%d...", host, port)
     proc = subprocess.Popen(cmd, env=env)
@@ -288,6 +301,10 @@ def main() -> None:
 
     gateway_port = int(os.environ.get("DEVICE_GATEWAY_PORT", "8765"))
     gateway_host = "127.0.0.1"
+
+    # Ensure Device Gateway is enabled in the unified server process
+    if "DEVICE_GATEWAY_ENABLED" not in os.environ:
+        os.environ["DEVICE_GATEWAY_ENABLED"] = "true"
 
     logger.info("Starting Personal AI Assistant Unified Server on port %d...", public_port)
 
