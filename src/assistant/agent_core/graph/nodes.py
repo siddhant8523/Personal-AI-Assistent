@@ -99,8 +99,9 @@ def make_agent_node(llm: LLMClient, tools: list[StructuredTool], soul_text: str 
                 "- Safe device actions (such as `set_alarm`, `set_timer`, `list_alarms`, `cancel_alarm`, `open_mobile_app`) and read-only tools execute directly without requiring approval. Call their tools immediately.\n\n"
                 "## Tool Invocation & Messaging Rules:\n"
                 "- PRIORITY INBOX & AGENDA PLANNING (CRITICAL):\n"
-                "  * Use `query_priority_inbox` when the user asks to view their priority messages, important emails, or priority inbox.\n"
+                "  * Use `query_priority_inbox` when the user asks to view their priority messages, important emails, priority inbox, or asks 'what is important?', 'what should I know?', 'what did I miss?', 'are there any urgent messages?'.\n"
                 "  * ALWAYS invoke `query_agenda` when the user asks about their schedule, meetings, deadlines, commitments, or plans for a specific date (e.g. 'do I have any meeting for tomorrow?', 'what should I do tomorrow?', 'what are my deadlines tomorrow?', 'what is scheduled tomorrow?', 'what do I need to handle tomorrow?').\n"
+                "  * NATURAL-LANGUAGE SYNTHESIS: After tool execution returns priority or agenda information, you MUST formulate a natural, helpful conversational response. Explain confirmed commitments and deadlines clearly, specify which messages require user action, and distinguish confirmed meetings from suggestions. NEVER regurgitate raw template text.\n"
                 "  * When planning or answering about a day's schedule (e.g. 'what should I do tomorrow?'):\n"
                 "    1. Inspect the retrieved commitments from `query_agenda` first.\n"
                 "    2. Present actual confirmed meetings, appointments, and deadlines FIRST, noting exact times and details.\n"
@@ -128,8 +129,7 @@ def make_agent_node(llm: LLMClient, tools: list[StructuredTool], soul_text: str 
                 "  * If the user provides explicit text to send (e.g. 'Send Sidd: Hello how are you'), pass the text exact verbatim.\n"
                 "  * If the user asks you to WRITE, DRAFT, GENERATE, SEARCH FOR, or FETCH a message (e.g. 'Send Sidd a 10-line paragraph about machine learning' or 'Send Rahul the latest news'), YOU MUST GENERATE / FORMAT the complete, high-quality content text FIRST, and pass THAT full content as the `content` parameter when calling the send tool!\n"
                 "- GENERAL & CROSS-PLATFORM MESSAGE INQUIRIES (CRITICAL):\n"
-                "  * When the user asks 'is there any new message?', 'check my messages', 'any latest message', 'what are my latest messages?', or asks for recent messages without naming a single channel: YOU MUST INVOKE tools to check messages across active channels (e.g. `read_sms`, `query_priority_inbox`, `read_whatsapp_messages`, `read_telegram_messages`).\n"
-                "  * NEVER reply with 'Not unless you ask me to check a specific platform'.\n"
+                "  * When the user asks 'what is important?', 'what should I know?', 'what did I miss?', 'is there any new message?', 'check my messages', 'any latest message', 'what are my latest messages?': YOU MUST query the priority system (`query_priority_inbox` or `query_agenda`) first to inspect unified, prioritized cross-platform messages.\n"
                 "  * NEVER claim or hallucinate that SMS or messages were checked unless you actually invoked the corresponding tool(s).\n"
                 "- ANDROID DEVICE TOOLS:\n"
                 "  * Use `set_alarm` IMMEDIATELY when asked to set an alarm on the phone (e.g. 'set alarm for 10:54 am today', 'set an alarm for 7:57 PM', 'set an alarm for 7 AM'). Pass the exact requested time string (e.g. '10:54 AM', '7:57 PM', '07:57', '8:30 AM'). NEVER ask conversational confirmation before calling `set_alarm`.\n"
@@ -161,8 +161,8 @@ def make_agent_node(llm: LLMClient, tools: list[StructuredTool], soul_text: str 
                 if isinstance(last_msg, AIMessage):
                     existing.append(HumanMessage(content=user_content))
                 elif isinstance(last_msg, ToolMessage):
-                    if text and not str(last_msg.content).startswith("[Pending approval"):
-                        existing.append(HumanMessage(content=user_content))
+                    # ToolMessage was produced in this turn; model will respond directly to it
+                    pass
                 elif isinstance(last_msg, HumanMessage) and last_msg.content != user_content:
                     existing.append(HumanMessage(content=user_content))
 

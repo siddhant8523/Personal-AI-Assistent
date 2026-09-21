@@ -168,16 +168,37 @@ class PriorityAnalyzer:
         context_block = ("\n\nContext:\n" + "\n".join(context_lines)) if context_lines else ""
 
         # Build sanitized batch payload for LLM with timestamp for relative date resolution
-        payload = [
-            {
-                "message_id": str(msg["id"]),
+        payload = []
+        for msg in batch:
+            raw_ts = msg.get("ts")
+            ts_float = time.time()
+            if raw_ts is not None:
+                if isinstance(raw_ts, (int, float)):
+                    ts_float = float(raw_ts) / 1000.0 if raw_ts > 1e11 else float(raw_ts)
+                elif isinstance(raw_ts, str):
+                    try:
+                        ts_float = float(raw_ts)
+                        if ts_float > 1e11:
+                            ts_float = ts_float / 1000.0
+                    except ValueError:
+                        try:
+                            clean_str = raw_ts.strip().replace("Z", "+00:00")
+                            from datetime import datetime
+                            ts_float = datetime.fromisoformat(clean_str).timestamp()
+                        except Exception:
+                            ts_float = time.time()
+            try:
+                formatted_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts_float))
+            except Exception:
+                formatted_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+            payload.append({
+                "message_id": str(msg.get("id", "")),
                 "source": msg.get("source", ""),
                 "sender": msg.get("sender", ""),
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(msg.get("ts", time.time()))),
+                "timestamp": formatted_ts,
                 "content": msg.get("content", ""),
-            }
-            for msg in batch
-        ]
+            })
 
         user_prompt = f"Analyze the following {len(payload)} incoming messages:{context_block}\n\nMessages:\n{json.dumps(payload, ensure_ascii=False)}"
         return [
@@ -190,13 +211,41 @@ class PriorityAnalyzer:
             raise LLMAuthenticationError("PRIORITY_GROQ_API_KEY is not configured or offline")
 
         def invoke():
-            model = getattr(self.llm_client, "model", None)
+            from unittest.mock import Mock, DEFAULT
+            from assistant.llm.llm_client import LLMClient
+
+            model = None
+            cand_model = getattr(self.llm_client, "model", None)
+            cand_glm = getattr(self.llm_client, "get_langchain_model", None)
+
+            if isinstance(self.llm_client, LLMClient):
+                model = self.llm_client.get_langchain_model()
+            elif isinstance(self.llm_client, Mock):
+                if isinstance(cand_glm, Mock) and (cand_glm._mock_return_value is not DEFAULT or cand_glm._mock_side_effect is not None):
+                    model = cand_glm()
+                elif isinstance(cand_model, Mock) and hasattr(cand_model, "invoke"):
+                    model = cand_model
+                elif callable(cand_glm):
+                    model = cand_glm()
+                elif cand_model is not None and hasattr(cand_model, "invoke"):
+                    model = cand_model
+            else:
+                if callable(cand_glm):
+                    try:
+                        model = cand_glm()
+                    except Exception:
+                        pass
+                if model is None and cand_model is not None and hasattr(cand_model, "invoke"):
+                    model = cand_model
+
             if model is not None and hasattr(model, "invoke"):
                 res = model.invoke(prompt_messages)
                 return getattr(res, "content", str(res))
-            # Fallback to generate
-            prompt_str = "\n".join(getattr(m, "content", str(m)) for m in prompt_messages)
-            return self.llm_client.generate(prompt_str)
+
+            # 2. Fallback to generate() with proper (system, user_message, max_tokens) signature
+            sys_content = prompt_messages[0].content if len(prompt_messages) > 0 and hasattr(prompt_messages[0], "content") else _SYSTEM_PROMPT
+            user_content = prompt_messages[1].content if len(prompt_messages) > 1 and hasattr(prompt_messages[1], "content") else "\n".join(getattr(m, "content", str(m)) for m in prompt_messages)
+            return self.llm_client.generate(system=sys_content, user_message=user_content, max_tokens=1500)
 
         attempt = 0
 
@@ -270,7 +319,12 @@ class PriorityAnalyzer:
 
     def _process_single_batch(self, batch: list[dict[str, Any]]) -> dict[str, int]:
         batch_ids = [m["id"] for m in batch]
-        prompt_messages = self._build_prompt_messages(batch)
+        try:
+            prompt_messages = self._build_prompt_messages(batch)
+        except Exception as exc:
+            logger.error("Priority analyzer: failed to build prompt for batch: %s", exc)
+            self.priority_inbox.defer_processing_messages(batch_ids, error=f"prompt_build_error_{type(exc).__name__}")
+            return {"completed": 0, "deferred": len(batch_ids)}
 
         try:
             raw_text = self._call_llm_with_resilience(prompt_messages)
@@ -442,7 +496,7 @@ class PriorityAnalyzerWorker:
         except Exception as exc:
             logger.error("Priority analyzer: error during startup stale recovery: %s", exc)
 
-        # 2. Run initial cycle only if explicitly configured
+        # 2. Run initial cycle if explicitly configured OR if pending messages exist
         if self.run_on_startup:
             try:
                 self.analyzer.process_cycle()

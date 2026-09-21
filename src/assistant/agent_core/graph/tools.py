@@ -205,18 +205,28 @@ def _format_priority_item(item: dict, index: int) -> str:
     content = (item.get("content") or "").strip()
     if len(content) > 200:
         content = content[:197] + "..."
-    line = f"{index}. {item.get('source', '')} — {item.get('sender', '')} — {content}"
+    source_str = (item.get("source") or "").upper()
+    sender_str = item.get("sender") or "Unknown"
+    line = f"{index}. [{source_str}] From {sender_str}: {content}"
+
     meta = []
     if item.get("deadline"):
-        meta.append(f"Deadline: {item['deadline']}")
+        meta.append(f"Time/Deadline: {item['deadline']}")
     if item.get("system_intent") and item["system_intent"] not in ("OTHER", "CHAT"):
         meta.append(f"Intent: {item['system_intent']}")
     if item.get("requires_action"):
-        meta.append("Action Required")
+        meta.append("Action Required: YES")
+    if item.get("system_urgency") and item["system_urgency"] != "LOW":
+        meta.append(f"Urgency: {item['system_urgency']}")
+    if item.get("system_importance") and item["system_importance"] != "LOW":
+        meta.append(f"Importance: {item['system_importance']}")
     if item.get("is_scam"):
-        meta.append("WARNING: Suspected Scam")
+        meta.append("SECURITY ALERT: Phishing / Scam Risk")
     elif item.get("is_spam"):
-        meta.append("Spam")
+        meta.append("Spam/Promotional")
+    if item.get("system_reason"):
+        meta.append(f"Reason: {item['system_reason']}")
+
     if meta:
         line += f"\n   [{' | '.join(meta)}]"
     return line
@@ -228,6 +238,9 @@ def render_priority_inbox(
     limit: int | None = None,
     query: str = "",
 ) -> str:
+    if priority_inbox is not None and hasattr(priority_inbox, "process_pending_if_needed"):
+        priority_inbox.process_pending_if_needed()
+
     parsed_level, parsed_limit = parse_priority_query(query)
     target_level = level or parsed_level
     target_limit = limit or parsed_limit
@@ -266,6 +279,9 @@ def render_agenda(
     target_date: str = "tomorrow",
     query: str = "",
 ) -> str:
+    if priority_inbox is not None and hasattr(priority_inbox, "process_pending_if_needed"):
+        priority_inbox.process_pending_if_needed()
+
     q_lower = (query or "").lower()
     date_key = target_date or "tomorrow"
     if "tomorrow" in q_lower:
@@ -872,6 +888,15 @@ def build_tools(
             )
 
             if not candidates:
+                if whatsapp_connector is not None:
+                    try:
+                        wa_status = whatsapp_connector.get_status()
+                        if not wa_status.get("connected"):
+                            if wa_status.get("qr"):
+                                return "WhatsApp authentication is required (waiting for QR scan). WhatsApp is currently offline."
+                            return "WhatsApp connector is currently offline."
+                    except Exception:
+                        pass
                 return "No recent WhatsApp messages found."
 
             lines = []

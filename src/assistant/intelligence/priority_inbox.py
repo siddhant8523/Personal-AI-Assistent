@@ -6,6 +6,7 @@ Backed by SQLite via storage/db.py so it survives restarts.
 """
 
 from __future__ import annotations
+from google.protobuf.any_pb2 import Any
 
 import json
 import os
@@ -22,6 +23,25 @@ class PriorityInbox:
             self.max_per_level = max_per_level
         else:
             self.max_per_level = int(os.environ.get("PRIORITY_INBOX_MAX_PER_LEVEL", "20"))
+        self._analyzer = None
+
+    def set_analyzer(self, analyzer: Any) -> None:
+        """Attach the PriorityAnalyzer instance for optional on-demand execution."""
+        self._analyzer = analyzer
+
+    def process_pending_if_needed(self) -> dict[str, Any] | None:
+        """Processes pending messages on-demand if an analyzer is attached and items exist.
+
+        Guarantees zero LLM calls if pending_count == 0.
+        """
+        if self._analyzer is not None:
+            try:
+                if self.count_pending_messages() > 0:
+                    return self._analyzer.process_cycle()
+            except Exception as exc:
+                import logging
+                logging.getLogger("assistant.priority_inbox").debug("Error in on-demand priority analysis: %s", exc)
+        return None
 
     def add(self, result: PriorityResult) -> None:
         conn = get_connection()
@@ -40,11 +60,30 @@ class PriorityInbox:
         if existing:
             return
 
+        # Normalize timestamp to float unix seconds
+        raw_ts = result.message.timestamp
+        ts_val = time.time()
+        if raw_ts is not None:
+            if isinstance(raw_ts, (int, float)):
+                ts_val = float(raw_ts) / 1000.0 if raw_ts > 1e11 else float(raw_ts)
+            elif isinstance(raw_ts, str):
+                try:
+                    ts_val = float(raw_ts)
+                    if ts_val > 1e11:
+                        ts_val = ts_val / 1000.0
+                except ValueError:
+                    try:
+                        from datetime import datetime
+                        clean_str = raw_ts.strip().replace("Z", "+00:00")
+                        ts_val = datetime.fromisoformat(clean_str).timestamp()
+                    except Exception:
+                        ts_val = time.time()
+
         # 2. Insert new record with PENDING analysis_status
         conn.execute(
             "INSERT INTO priority_inbox (message_id, source, sender, content, category, score, level, ts, analysis_status, analysis_attempts) "
             "VALUES (?,?,?,?,?,?,?,?, 'PENDING', 0)",
-            (msg_id, src, sender, content, cat, result.score, lvl, result.message.timestamp),
+            (msg_id, src, sender, content, cat, result.score, lvl, ts_val),
         )
 
         # 3. Enforce hard limit of MAX per priority level
@@ -250,21 +289,27 @@ class PriorityInbox:
             date_str = now.strftime("%Y-%m-%d")
 
         conn = get_connection()
-        recent_cutoff = time.time() - 72 * 3600  # last 3 days
+        # Strictly exclude spam/scam and ignored items
+        # Prioritize explicit semantic deadline matches, confirmed meetings/interviews, and action items
         sql = (
             "SELECT id, message_id, source, sender, content, category, score, "
             "COALESCE(final_priority, level) as level, ts, "
             "system_category, system_intent, system_urgency, system_importance, "
             "requires_action, is_spam, is_scam, risk_score, deadline, system_reason "
             "FROM priority_inbox "
-            "WHERE (COALESCE(final_priority, level) != 'IGNORE') AND ("
-            "  (deadline IS NOT NULL AND deadline LIKE ?)"
-            "  OR (ts >= ? AND (content LIKE ? OR content LIKE ?))"
-            "  OR (ts >= ? AND requires_action = 1 AND ? = 'today')"
-            ") "
+            "WHERE (COALESCE(final_priority, level) != 'IGNORE') "
+            "  AND (is_spam = 0 AND is_scam = 0) AND ( "
+            "    (deadline IS NOT NULL AND deadline LIKE ?) "
+            "    OR (requires_action = 1 AND ? = 'today') "
+            "    OR (system_intent IN ('MEETING', 'INTERVIEW', 'TASK') AND (deadline LIKE ? OR content LIKE ? OR content LIKE ?)) "
+            "    OR (analysis_status = 'PENDING' AND (content LIKE ? OR content LIKE ?)) "
+            "  ) "
             "ORDER BY "
             "  CASE WHEN deadline IS NOT NULL AND deadline != '' THEN 0 ELSE 1 END ASC, "
-            "  CASE WHEN requires_action = 1 OR system_intent IN ('MEETING', 'INTERVIEW', 'TASK') THEN 0 ELSE 1 END ASC, "
+            "  CASE WHEN system_intent IN ('MEETING', 'INTERVIEW') THEN 0 "
+            "       WHEN requires_action = 1 THEN 1 "
+            "       WHEN system_intent = 'TASK' THEN 2 "
+            "       ELSE 3 END ASC, "
             "  deadline ASC, score DESC, ts DESC "
             "LIMIT ?"
         )
@@ -273,7 +318,7 @@ class PriorityInbox:
         rel_pattern_cap = f"%{relative_word.capitalize()}%" if relative_word else "%__none__%"
         rows = conn.execute(
             sql,
-            (date_pattern, recent_cutoff, rel_pattern, rel_pattern_cap, recent_cutoff, relative_word, limit),
+            (date_pattern, relative_word, date_pattern, rel_pattern, rel_pattern_cap, rel_pattern, rel_pattern_cap, limit),
         ).fetchall()
         return [dict(r) for r in rows]
 

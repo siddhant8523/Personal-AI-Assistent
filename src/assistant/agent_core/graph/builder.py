@@ -68,7 +68,6 @@ DEVICE_TOOL_NAMES = {
     "execute_android_intent",
     "open_mobile_app",
     "make_call",
-    "read_sms",
     "list_mobile_files",
     "find_mobile_files",
     "send_sms",
@@ -100,7 +99,6 @@ def _route_after_tool_exec(state: AgentState) -> str:
             "Approved and executed" in content
             or "Approved, but failed to execute" in content
             or "Rejected" in content
-            or "TODAY'S PRIORITY" in content
             or "no pending actions" in content_lower
             or "name was not changed" in content_lower
             or "assistant name changed" in content_lower
@@ -118,8 +116,6 @@ def _route_after_tool_exec(state: AgentState) -> str:
             or "calling " in content_lower
             or "couldn't find a contact" in content_lower
             or "found multiple contacts" in content_lower
-            or "sms from" in content_lower
-            or "no sms messages found" in content_lower
             or "files in " in content_lower
             or "found files matching" in content_lower
         ):

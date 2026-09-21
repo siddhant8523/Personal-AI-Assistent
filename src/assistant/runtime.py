@@ -496,6 +496,7 @@ class AssistantRuntime:
             batch_size=analyzer_batch_size,
             max_batches_per_cycle=analyzer_max_batches,
         )
+        self.priority_inbox.set_analyzer(self.priority_analyzer)
         self.priority_analyzer_worker = PriorityAnalyzerWorker(
             analyzer=self.priority_analyzer,
             interval_minutes=analyzer_interval,
